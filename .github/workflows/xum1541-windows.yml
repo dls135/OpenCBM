@@ -1,4 +1,4 @@
-name: XUM1541 Windows x64 - Diagnostico
+name: XUM1541 Windows x64 - Compilacion diagnostica
 
 on:
   workflow_dispatch:
@@ -10,27 +10,50 @@ jobs:
       contents: read
 
     steps:
-      - name: Obtener codigo OpenCBM
+      - name: Obtener OpenCBM
         uses: actions/checkout@v4
 
-      - name: Examinar entorno de compilacion
+      - name: Comprobar herramientas y dependencias
         shell: pwsh
         run: |
-          "Windows y herramientas:" | Out-File diagnostico.txt
-          cmd /c ver | Out-File diagnostico.txt -Append
-          foreach ($tool in @('cl.exe','nmake.exe','msbuild.exe','gcc.exe','make.exe')) {
-            Get-Command $tool -ErrorAction SilentlyContinue |
-              Select-Object Name,Source |
-              Out-String | Out-File diagnostico.txt -Append
-          }
-          "Archivos de construccion OpenCBM:" | Out-File diagnostico.txt -Append
-          Get-ChildItem -Recurse -File -Include sources,dirs,Makefile,makefile,*.sln,*.vcxproj,*.mk |
-            Select-Object -ExpandProperty FullName |
-            Out-File diagnostico.txt -Append
-          Get-Content diagnostico.txt
+          $ErrorActionPreference = 'Stop'
+          $log = 'diagnostico-compilacion.txt'
+          "DIAGNOSTICO XUM1541 - WINDOWS X64" | Set-Content $log
+          "Arquitectura: $env:PROCESSOR_ARCHITECTURE" | Add-Content $log
 
-      - name: Guardar informe
+          foreach ($tool in @('gcc.exe','make.exe','cl.exe','link.exe','nmake.exe')) {
+            "HERRAMIENTA: $tool" | Add-Content $log
+            $found = Get-Command $tool -ErrorAction SilentlyContinue
+            if ($found) {
+              $found.Source | Add-Content $log
+            } else {
+              "No encontrada en PATH" | Add-Content $log
+            }
+          }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            "VISUAL STUDIO:" | Add-Content $log
+            & $vswhere -all -products '*' -property installationPath | Add-Content $log
+          }
+
+          $base = 'opencbm/lib/plugin/xum1541'
+          foreach ($file in @(
+            "$base/WINDOWS/Makefile",
+            "$base/WINDOWS/sources",
+            "$base/xum1541.c",
+            "$base/xum1541.h"
+          )) {
+            "ARCHIVO: $file" | Add-Content $log
+            "Existe: $(Test-Path $file)" | Add-Content $log
+          }
+
+          "DIRECTIVAS DE COMPILACION:" | Add-Content $log
+          Get-Content "$base/WINDOWS/sources" | Add-Content $log
+          Get-Content $log
+
+      - name: Guardar diagnostico
         uses: actions/upload-artifact@v4
         with:
-          name: diagnostico-opencbm-windows
-          path: diagnostico.txt
+          name: diagnostico-compilacion-xum1541
+          path: diagnostico-compilacion.txt
