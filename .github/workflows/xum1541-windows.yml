@@ -26,9 +26,9 @@ jobs:
 
           $base = 'opencbm\lib\plugin\xum1541'
           $includes = @(
-            'xum1541',
-            $base,
-            "$base\WINDOWS",
+          $base,
+          'xum1541',
+          "$base\WINDOWS",
             'opencbm\libmisc\WINDOWS',
             'opencbm\include',
             'opencbm\include\WINDOWS',
