@@ -1,4 +1,4 @@
-name: XUM1541 - Enlace de referencia x64
+name: XUM1541 - Compilar watchdog experimental x64
 
 on:
   workflow_dispatch:
@@ -8,10 +8,13 @@ permissions:
   actions: read
 
 jobs:
-  enlazar:
+  compilar:
     runs-on: windows-latest
     steps:
-      - name: Recuperar seis objetos XUM1541
+      - name: Obtener repositorio con fuente experimental
+        uses: actions/checkout@v4
+
+      - name: Recuperar objetos originales
         uses: actions/download-artifact@v4
         with:
           name: compilacion-seis-xum1541
@@ -35,51 +38,65 @@ jobs:
           github-token: ${{ github.token }}
           path: build/arch
 
-      - name: Enlazar DLL de referencia con MSVC
+      - name: Compilar fuente experimental y enlazar DLL
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $source = 'experimentos/xum1541_watchdog10s_EXPERIMENTAL.c'
+          if (-not (Test-Path $source)) { throw "Falta el archivo $source" }
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vs) { throw 'MSVC x64 no encontrado' }
           $dev = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
-
-          $nombres = @('archlib','xum1541','s1_s2_pp','parburst','dllmain','install')
-          $objetos = foreach ($nombre in $nombres) {
-            $ruta = Join-Path 'build/xum/objetos' "$nombre.obj"
-            if (-not (Test-Path $ruta)) { throw "Falta $ruta" }
-            '"' + $ruta + '"'
+          New-Item -ItemType Directory -Force resultado | Out-Null
+          $includes = @(
+            'opencbm\lib\plugin\xum1541',
+            'xum1541',
+            'opencbm\lib\plugin\xum1541\WINDOWS',
+            'opencbm\libmisc\WINDOWS',
+            'opencbm\include',
+            'opencbm\include\WINDOWS',
+            'opencbm\lib',
+            'opencbm\lib\WINDOWS',
+            'opencbm\arch\windows',
+            'opencbm\libmisc'
+          )
+          $flags = ($includes | ForEach-Object { '/I"' + $_ + '"' }) -join ' '
+          $otherNames = @('archlib','s1_s2_pp','parburst','dllmain','install')
+          $otherObjects = foreach ($name in $otherNames) {
+            $p = "build/xum/objetos/$name.obj"
+            if (-not (Test-Path $p)) { throw "Falta $p" }
+            '"' + $p + '"'
           }
-          foreach ($ruta in @('build/misc/libmisc.lib','build/arch/arch.lib')) {
-            if (-not (Test-Path $ruta)) { throw "Falta $ruta" }
+          foreach ($p in @('build/misc/libmisc.lib','build/arch/arch.lib')) {
+            if (-not (Test-Path $p)) { throw "Falta $p" }
           }
-
-          New-Item -ItemType Directory -Force referencia | Out-Null
-          $cmd = Join-Path $env:RUNNER_TEMP 'link-xum.cmd'
-          $enlace = 'link /NOLOGO /DLL /MACHINE:X64 /OUT:"referencia\opencbm-xum1541_NO_INSTALAR.dll" /IMPLIB:"referencia\opencbm-xum1541.lib" ' +
-            ($objetos -join ' ') + ' "build/misc/libmisc.lib" "build/arch/arch.lib" kernel32.lib user32.lib advapi32.lib winmm.lib'
+          $cmd = Join-Path $env:RUNNER_TEMP 'compilar-watchdog.cmd'
+          $compile = 'cl /nologo /c /DWIN32 /DHAVE_LIBUSB0=0 /DHAVE_LIBUSB1=1 /DHAVE_LIBUSB_1_0=1 ' + $flags + ' /Fo"resultado/xum1541_watchdog.obj" "' + $source + '"'
+          $objects = @('"resultado/xum1541_watchdog.obj"') + $otherObjects
+          $link = 'link /NOLOGO /DLL /MACHINE:X64 /OUT:"resultado/opencbm-xum1541_WATCHDOG_NO_INSTALAR.dll" /IMPLIB:"resultado/opencbm-xum1541.lib" ' + ($objects -join ' ') + ' "build/misc/libmisc.lib" "build/arch/arch.lib" kernel32.lib user32.lib advapi32.lib winmm.lib'
           @(
             '@echo off',
             ('call "' + $dev + '" -no_logo -arch=amd64'),
             'if errorlevel 1 exit /b 1',
-            $enlace,
+            $compile,
             'if errorlevel 1 exit /b 1',
-            'dumpbin /HEADERS "referencia\opencbm-xum1541_NO_INSTALAR.dll"',
-            'dumpbin /EXPORTS "referencia\opencbm-xum1541_NO_INSTALAR.dll"',
-            'dumpbin /DEPENDENTS "referencia\opencbm-xum1541_NO_INSTALAR.dll"',
+            $link,
+            'if errorlevel 1 exit /b 1',
+            'dumpbin /HEADERS "resultado/opencbm-xum1541_WATCHDOG_NO_INSTALAR.dll"',
+            'dumpbin /EXPORTS "resultado/opencbm-xum1541_WATCHDOG_NO_INSTALAR.dll"',
+            'dumpbin /DEPENDENTS "resultado/opencbm-xum1541_WATCHDOG_NO_INSTALAR.dll"',
             'exit /b 0'
           ) | Set-Content $cmd -Encoding ascii
+          & cmd.exe /d /c $cmd 2>&1 | Tee-Object -FilePath resultado-compilacion-watchdog.txt
+          if ($LASTEXITCODE -ne 0) { throw "Compilacion/enlace fallo: $LASTEXITCODE" }
 
-          & cmd.exe /d /c $cmd 2>&1 | Tee-Object -FilePath resultado-enlace.txt
-          if ($LASTEXITCODE -ne 0) { throw "El enlace o la inspeccion fallo: $LASTEXITCODE" }
-
-      - name: Guardar resultado para auditoria
+      - name: Guardar DLL y diagnostico
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xum1541-enlace-referencia-NO-INSTALAR
+          name: xum1541-watchdog-x64-NO-INSTALAR
           path: |
-            resultado-enlace.txt
-            referencia/*.dll
-            referencia/*.lib
+            resultado-compilacion-watchdog.txt
+            resultado/*
           if-no-files-found: warn
