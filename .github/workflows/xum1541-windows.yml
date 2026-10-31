@@ -1,5 +1,5 @@
 
-name: XUM1541 - Prueba compilacion C x64
+name: XUM1541 - Compilar seis archivos x64
 
 on:
   workflow_dispatch:
@@ -10,27 +10,25 @@ permissions:
 jobs:
   compilar:
     runs-on: windows-latest
-
     steps:
-      - name: Obtener fuentes
+      - name: Obtener OpenCBM
         uses: actions/checkout@v4
 
-      - name: Comprobar compilacion MSVC x64
+      - name: Compilar objetos x64
         shell: pwsh
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-
-          if (-not $vs) {
-            throw 'No se encontro MSVC'
-          }
-
+          if (-not $vs) { throw 'MSVC no encontrado' }
           $dev = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
 
+          New-Item -ItemType Directory -Force objetos | Out-Null
+
+          $base = 'opencbm\lib\plugin\xum1541'
           $includes = @(
             'xum1541',
-            'opencbm\lib\plugin\xum1541',
-            'opencbm\lib\plugin\xum1541\WINDOWS',
+            $base,
+            "$base\WINDOWS",
             'opencbm\libmisc\WINDOWS',
             'opencbm\include',
             'opencbm\include\WINDOWS',
@@ -39,27 +37,40 @@ jobs:
             'opencbm\arch\windows',
             'opencbm\libmisc'
           )
-
           $flags = ($includes | ForEach-Object { '/I"' + $_ + '"' }) -join ' '
-          $source = 'opencbm\lib\plugin\xum1541\xum1541.c'
-          $cmd = Join-Path $env:RUNNER_TEMP 'test-xum.cmd'
+          $sources = @(
+            "$base\archlib.c",
+            "$base\xum1541.c",
+            "$base\s1_s2_pp.c",
+            "$base\parburst.c",
+            "$base\WINDOWS\dllmain.c",
+            "$base\WINDOWS\install.c"
+          )
 
-          @(
-            '@echo off'
-            ('call "' + $dev + '" -no_logo -arch=amd64')
-            ('cl /nologo /Zs /DWIN32 /DHAVE_LIBUSB0=0 /DHAVE_LIBUSB1=1 /DHAVE_LIBUSB_1_0=1 ' + $flags + ' "' + $source + '"')
-            'exit /b %errorlevel%'
-          ) | Set-Content -Path $cmd -Encoding ascii
+          $cmd = Join-Path $env:RUNNER_TEMP 'compilar-xum.cmd'
+          $lines = @(
+            '@echo off',
+            ('call "' + $dev + '" -no_logo -arch=amd64'),
+            'if errorlevel 1 exit /b 1'
+          )
+          foreach ($source in $sources) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($source)
+            $lines += ('cl /nologo /c /DWIN32 /DHAVE_LIBUSB0=0 /DHAVE_LIBUSB1=1 /DHAVE_LIBUSB_1_0=1 ' + $flags + ' /Fo"objetos\' + $name + '.obj" "' + $source + '"')
+            $lines += 'if errorlevel 1 exit /b 1'
+          }
+          $lines += 'exit /b 0'
+          $lines | Set-Content $cmd -Encoding ascii
 
-          & cmd.exe /d /c $cmd 2>&1 |
-            Tee-Object -FilePath compilacion-xum1541.txt
+          & cmd.exe /d /c $cmd 2>&1 | Tee-Object -FilePath compilacion-seis.txt
+          if ($LASTEXITCODE -ne 0) { throw "Compilacion fallida: $LASTEXITCODE" }
 
-          exit $LASTEXITCODE
-
-      - name: Guardar resultado
+      - name: Guardar diagnostico
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: resultado-compilacion-xum1541
-          path: compilacion-xum1541.txt
+          name: compilacion-seis-xum1541
+          path: |
+            compilacion-seis.txt
+            objetos/*.obj
           if-no-files-found: warn
+  
