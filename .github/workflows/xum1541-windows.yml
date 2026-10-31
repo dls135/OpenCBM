@@ -1,52 +1,64 @@
-name: XUM1541 - Verificar compilador MSVC x64
+
+name: XUM1541 - Prueba compilacion C x64
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  verificar:
+  compilar:
     runs-on: windows-latest
-    permissions:
-      contents: read
 
     steps:
-      - name: Obtener codigo
+      - name: Obtener fuentes
         uses: actions/checkout@v4
 
-      - name: Localizar MSVC y SDK
+      - name: Comprobar compilacion MSVC x64
         shell: pwsh
         run: |
-          $log = "resultado-msvc.txt"
-          "VERIFICACION MSVC X64" | Set-Content $log
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) {
-            $instalaciones = & $vswhere -all -products '*' -property installationPath
-            foreach ($instalacion in $instalaciones) {
-              "Visual Studio: $instalacion" | Add-Content $log
-              $vc = Join-Path $instalacion "VC\Tools\MSVC"
-              if (Test-Path $vc) {
-                Get-ChildItem $vc -Recurse -Filter cl.exe |
-                  Select-Object -ExpandProperty FullName |
-                  Add-Content $log
-              }
-              $devcmd = Join-Path $instalacion "Common7\Tools\VsDevCmd.bat"
-              "VsDevCmd disponible: $(Test-Path $devcmd)" | Add-Content $log
-            }
+          if (-not $vs) {
+            throw 'No se encontro MSVC'
           }
 
-          "WINDOWS SDK:" | Add-Content $log
-          $sdk = "${env:ProgramFiles(x86)}\Windows Kits\10\Lib"
-          if (Test-Path $sdk) {
-            Get-ChildItem $sdk -Directory |
-              Select-Object -ExpandProperty Name |
-              Add-Content $log
-          }
+          $dev = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
 
-          Get-Content $log
+          $includes = @(
+            'opencbm\lib\plugin\xum1541',
+            'opencbm\lib\plugin\xum1541\WINDOWS',
+            'opencbm\libmisc\WINDOWS',
+            'opencbm\include',
+            'opencbm\include\WINDOWS',
+            'opencbm\lib',
+            'opencbm\lib\WINDOWS',
+            'opencbm\arch\windows',
+            'opencbm\libmisc'
+          )
 
-      - name: Guardar resultados
+          $flags = ($includes | ForEach-Object { '/I"' + $_ + '"' }) -join ' '
+          $source = 'opencbm\lib\plugin\xum1541\xum1541.c'
+          $cmd = Join-Path $env:RUNNER_TEMP 'test-xum.cmd'
+
+          @(
+            '@echo off'
+            ('call "' + $dev + '" -no_logo -arch=amd64')
+            ('cl /nologo /Zs /DWIN32 /DHAVE_LIBUSB0=0 /DHAVE_LIBUSB1=1 /DHAVE_LIBUSB_1_0=1 ' + $flags + ' "' + $source + '"')
+            'exit /b %errorlevel%'
+          ) | Set-Content -Path $cmd -Encoding ascii
+
+          & cmd.exe /d /c $cmd 2>&1 |
+            Tee-Object -FilePath compilacion-xum1541.txt
+
+          exit $LASTEXITCODE
+
+      - name: Guardar resultado
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: resultado-msvc-x64
-          path: resultado-msvc.txt
+          name: resultado-compilacion-xum1541
+          path: compilacion-xum1541.txt
+          if-no-files-found: warn
