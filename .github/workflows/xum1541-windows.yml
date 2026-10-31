@@ -28,6 +28,7 @@ jobs:
           $dev = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
 
           $includes = @(
+            'xum1541',
             'opencbm\lib\plugin\xum1541',
             'opencbm\lib\plugin\xum1541\WINDOWS',
             'opencbm\libmisc\WINDOWS',
