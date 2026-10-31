@@ -1,73 +1,85 @@
-name: XUM1541 - Construir arch x64
+name: XUM1541 - Enlace de referencia x64
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  compilar:
+  enlazar:
     runs-on: windows-latest
     steps:
-      - name: Obtener fuentes
-        uses: actions/checkout@v4
+      - name: Recuperar seis objetos XUM1541
+        uses: actions/download-artifact@v4
+        with:
+          name: compilacion-seis-xum1541
+          run-id: 41240842463
+          github-token: ${{ github.token }}
+          path: build/xum
 
-      - name: Compilar arch.lib
+      - name: Recuperar libmisc
+        uses: actions/download-artifact@v4
+        with:
+          name: libmisc-x64-experimental
+          run-id: 41241864872
+          github-token: ${{ github.token }}
+          path: build/misc
+
+      - name: Recuperar arch
+        uses: actions/download-artifact@v4
+        with:
+          name: arch-x64-experimental
+          run-id: 41242230053
+          github-token: ${{ github.token }}
+          path: build/arch
+
+      - name: Enlazar DLL de referencia con MSVC
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $vs) { throw 'MSVC no encontrado' }
+          if (-not $vs) { throw 'MSVC x64 no encontrado' }
           $dev = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
 
-          New-Item -ItemType Directory -Force objetos-arch | Out-Null
+          $nombres = @('archlib','xum1541','s1_s2_pp','parburst','dllmain','install')
+          $objetos = foreach ($nombre in $nombres) {
+            $ruta = Join-Path 'build/xum/objetos' "$nombre.obj"
+            if (-not (Test-Path $ruta)) { throw "Falta $ruta" }
+            '"' + $ruta + '"'
+          }
+          foreach ($ruta in @('build/misc/libmisc.lib','build/arch/arch.lib')) {
+            if (-not (Test-Path $ruta)) { throw "Falta $ruta" }
+          }
 
-          $base = 'opencbm\arch\windows'
-          $sources = @(
-            'debug.c',
-            'ctrlbreak.c',
-            'dbghelp.c',
-            'error.c',
-            'file.c',
-            'getopt.c',
-            'getopt1.c',
-            'getopt_init.c',
-            'sleep.c'
-          )
-
-          $cmd = Join-Path $env:RUNNER_TEMP 'compilar-arch.cmd'
-          $lines = @(
+          New-Item -ItemType Directory -Force referencia | Out-Null
+          $cmd = Join-Path $env:RUNNER_TEMP 'link-xum.cmd'
+          $enlace = 'link /NOLOGO /DLL /MACHINE:X64 /OUT:"referencia\opencbm-xum1541_NO_INSTALAR.dll" /IMPLIB:"referencia\opencbm-xum1541.lib" ' +
+            ($objetos -join ' ') + ' "build/misc/libmisc.lib" "build/arch/arch.lib" kernel32.lib user32.lib advapi32.lib winmm.lib'
+          @(
             '@echo off',
             ('call "' + $dev + '" -no_logo -arch=amd64'),
-            'if errorlevel 1 exit /b 1'
-          )
+            'if errorlevel 1 exit /b 1',
+            $enlace,
+            'if errorlevel 1 exit /b 1',
+            'dumpbin /HEADERS "referencia\opencbm-xum1541_NO_INSTALAR.dll"',
+            'dumpbin /EXPORTS "referencia\opencbm-xum1541_NO_INSTALAR.dll"',
+            'dumpbin /DEPENDENTS "referencia\opencbm-xum1541_NO_INSTALAR.dll"',
+            'exit /b 0'
+          ) | Set-Content $cmd -Encoding ascii
 
-          foreach ($file in $sources) {
-            $name = [IO.Path]::GetFileNameWithoutExtension($file)
-            $source = "$base\$file"
-            $lines += ('cl /nologo /c /DWIN32 /DHAVE_STRING_H=1 /I"opencbm\include" /I"opencbm\include\WINDOWS" /I"' + $base + '" /Fo"objetos-arch\' + $name + '.obj" "' + $source + '"')
-            $lines += 'if errorlevel 1 exit /b 1'
-          }
+          & cmd.exe /d /c $cmd 2>&1 | Tee-Object -FilePath resultado-enlace.txt
+          if ($LASTEXITCODE -ne 0) { throw "El enlace o la inspeccion fallo: $LASTEXITCODE" }
 
-          $lines += 'lib /nologo /MACHINE:X64 /OUT:"arch.lib" objetos-arch\*.obj'
-          $lines += 'if errorlevel 1 exit /b 1'
-          $lines += 'exit /b 0'
-          $lines | Set-Content $cmd -Encoding ascii
-
-          & cmd.exe /d /c $cmd 2>&1 | Tee-Object -FilePath resultado-arch.txt
-          if ($LASTEXITCODE -ne 0) {
-            throw "Compilacion fallida: $LASTEXITCODE"
-          }
-
-      - name: Guardar resultados
+      - name: Guardar resultado para auditoria
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: arch-x64-experimental
+          name: xum1541-enlace-referencia-NO-INSTALAR
           path: |
-            resultado-arch.txt
-            arch.lib
-            objetos-arch/*.obj
+            resultado-enlace.txt
+            referencia/*.dll
+            referencia/*.lib
           if-no-files-found: warn
