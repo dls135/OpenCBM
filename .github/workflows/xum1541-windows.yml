@@ -1,5 +1,4 @@
-
-name: XUM1541 - Construir libmisc x64
+name: XUM1541 - Construir arch x64
 
 on:
   workflow_dispatch:
@@ -10,68 +9,54 @@ permissions:
 jobs:
   compilar:
     runs-on: windows-latest
-
     steps:
-      - name: Obtener OpenCBM
+      - name: Obtener fuentes
         uses: actions/checkout@v4
 
-      - name: Compilar libmisc
+      - name: Compilar arch.lib
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vs) { throw 'MSVC no encontrado' }
           $dev = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
 
-          New-Item -ItemType Directory -Force objetos-libmisc | Out-Null
+          New-Item -ItemType Directory -Force objetos-arch | Out-Null
 
-          $base = 'opencbm\libmisc'
-          $includes = @(
-            "$base\WINDOWS",
-            $base,
-            'opencbm\include',
-            'opencbm\include\WINDOWS',
-            'opencbm\arch\windows',
-            'xum1541'
-          )
-          $flags = ($includes | ForEach-Object { '/I"' + $_ + '"' }) -join ' '
-
+          $base = 'opencbm\arch\windows'
           $sources = @(
-            "$base\configuration.c",
-            "$base\WINDOWS\dynlibusb.c",
-            "$base\usbcommon0.c",
-            "$base\WINDOWS\formaterrormessage.c",
-            "$base\WINDOWS\getpluginaddress.c",
-            "$base\WINDOWS\perfeval.c",
-            "$base\WINDOWS\registry.c",
-            "$base\statedebug.c",
-            "$base\libstring.c"
+            'debug.c',
+            'ctrlbreak.c',
+            'dbghelp.c',
+            'error.c',
+            'file.c',
+            'getopt.c',
+            'getopt1.c',
+            'getopt_init.c',
+            'sleep.c'
           )
 
-          $cmd = Join-Path $env:RUNNER_TEMP 'compilar-libmisc.cmd'
+          $cmd = Join-Path $env:RUNNER_TEMP 'compilar-arch.cmd'
           $lines = @(
             '@echo off',
             ('call "' + $dev + '" -no_logo -arch=amd64'),
             'if errorlevel 1 exit /b 1'
           )
 
-          foreach ($source in $sources) {
-            $name = [IO.Path]::GetFileNameWithoutExtension($source)
-            $out = "objetos-libmisc\$name.obj"
-            $lines += ('cl /nologo /c /DWIN32 /DHAVE_LIBUSB0=0 /DHAVE_LIBUSB1=1 /DHAVE_LIBUSB_1_0=1 ' + $flags + ' /Fo"' + $out + '" "' + $source + '"')
+          foreach ($file in $sources) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($file)
+            $source = "$base\$file"
+            $lines += ('cl /nologo /c /DWIN32 /DHAVE_STRING_H=1 /I"opencbm\include" /I"opencbm\include\WINDOWS" /I"' + $base + '" /Fo"objetos-arch\' + $name + '.obj" "' + $source + '"')
             $lines += 'if errorlevel 1 exit /b 1'
           }
 
-          $lines += 'lib /nologo /MACHINE:X64 /OUT:"libmisc.lib" objetos-libmisc\*.obj'
+          $lines += 'lib /nologo /MACHINE:X64 /OUT:"arch.lib" objetos-arch\*.obj'
           $lines += 'if errorlevel 1 exit /b 1'
           $lines += 'exit /b 0'
           $lines | Set-Content $cmd -Encoding ascii
 
-          & cmd.exe /d /c $cmd 2>&1 |
-            Tee-Object -FilePath resultado-libmisc.txt
-
+          & cmd.exe /d /c $cmd 2>&1 | Tee-Object -FilePath resultado-arch.txt
           if ($LASTEXITCODE -ne 0) {
             throw "Compilacion fallida: $LASTEXITCODE"
           }
@@ -80,9 +65,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: libmisc-x64-experimental
+          name: arch-x64-experimental
           path: |
-            resultado-libmisc.txt
-            libmisc.lib
-            objetos-libmisc/*.obj
+            resultado-arch.txt
+            arch.lib
+            objetos-arch/*.obj
           if-no-files-found: warn
