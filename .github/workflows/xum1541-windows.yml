@@ -1,59 +1,52 @@
-name: XUM1541 Windows x64 - Compilacion diagnostica
+name: XUM1541 - Verificar compilador MSVC x64
 
 on:
   workflow_dispatch:
 
 jobs:
-  diagnostico:
+  verificar:
     runs-on: windows-latest
     permissions:
       contents: read
 
     steps:
-      - name: Obtener OpenCBM
+      - name: Obtener codigo
         uses: actions/checkout@v4
 
-      - name: Comprobar herramientas y dependencias
+      - name: Localizar MSVC y SDK
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $log = 'diagnostico-compilacion.txt'
-          "DIAGNOSTICO XUM1541 - WINDOWS X64" | Set-Content $log
-          "Arquitectura: $env:PROCESSOR_ARCHITECTURE" | Add-Content $log
-
-          foreach ($tool in @('gcc.exe','make.exe','cl.exe','link.exe','nmake.exe')) {
-            "HERRAMIENTA: $tool" | Add-Content $log
-            $found = Get-Command $tool -ErrorAction SilentlyContinue
-            if ($found) {
-              $found.Source | Add-Content $log
-            } else {
-              "No encontrada en PATH" | Add-Content $log
-            }
-          }
+          $log = "resultado-msvc.txt"
+          "VERIFICACION MSVC X64" | Set-Content $log
 
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           if (Test-Path $vswhere) {
-            "VISUAL STUDIO:" | Add-Content $log
-            & $vswhere -all -products '*' -property installationPath | Add-Content $log
+            $instalaciones = & $vswhere -all -products '*' -property installationPath
+            foreach ($instalacion in $instalaciones) {
+              "Visual Studio: $instalacion" | Add-Content $log
+              $vc = Join-Path $instalacion "VC\Tools\MSVC"
+              if (Test-Path $vc) {
+                Get-ChildItem $vc -Recurse -Filter cl.exe |
+                  Select-Object -ExpandProperty FullName |
+                  Add-Content $log
+              }
+              $devcmd = Join-Path $instalacion "Common7\Tools\VsDevCmd.bat"
+              "VsDevCmd disponible: $(Test-Path $devcmd)" | Add-Content $log
+            }
           }
 
-          $base = 'opencbm/lib/plugin/xum1541'
-          foreach ($file in @(
-            "$base/WINDOWS/Makefile",
-            "$base/WINDOWS/sources",
-            "$base/xum1541.c",
-            "$base/xum1541.h"
-          )) {
-            "ARCHIVO: $file" | Add-Content $log
-            "Existe: $(Test-Path $file)" | Add-Content $log
+          "WINDOWS SDK:" | Add-Content $log
+          $sdk = "${env:ProgramFiles(x86)}\Windows Kits\10\Lib"
+          if (Test-Path $sdk) {
+            Get-ChildItem $sdk -Directory |
+              Select-Object -ExpandProperty Name |
+              Add-Content $log
           }
 
-          "DIRECTIVAS DE COMPILACION:" | Add-Content $log
-          Get-Content "$base/WINDOWS/sources" | Add-Content $log
           Get-Content $log
 
-      - name: Guardar diagnostico
+      - name: Guardar resultados
         uses: actions/upload-artifact@v4
         with:
-          name: diagnostico-compilacion-xum1541
-          path: diagnostico-compilacion.txt
+          name: resultado-msvc-x64
+          path: resultado-msvc.txt
